@@ -1,0 +1,31 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- OS ---
+.DS_Store
+
+# --- Cloned reference code (kept local, not committed to your repo) ---
+reference/SGCN/
+
+# =============================================================================
+# DATA IS NOT COMMITTED.
+# ADNI Data Use Agreement forbids redistributing subject data. Keep all raw
+# scans, NIfTI files, and derived subject-level data OUT of version control.
+# =============================================================================
+data/raw/**
+data/nifti/**
+data/timeseries/**
+data/connectivity/**
+
+# Keep the empty-folder placeholders so the structure is preserved
+!**/.gitkeep
+
+# --- Model checkpoints & large outputs (regenerable) ---
+outputs/models/*.pt
+outputs/models/*.pth

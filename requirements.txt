@@ -1,0 +1,26 @@
+# =============================================================================
+# Requirements for: Correlation-Method Comparison for AD Classification via GCN
+# Environment tested on: macOS (Apple Silicon / arm64), Python 3.12
+# Install into a virtual environment (see README.md "Setup").
+# Version floors are conservative "known-good" minimums, not exact pins.
+# =============================================================================
+
+# --- Core scientific stack ---
+numpy>=1.26            # array backbone (numpy 2.x is fine; kept >=1.26 for broad compat)
+scipy>=1.11            # Spearman & Kendall correlation (Phase 4)
+pandas>=2.0            # tabular handling of subject metadata / results
+scikit-learn>=1.3      # used internally by nilearn; also for train/test utilities
+
+# --- Neuroimaging ---
+nibabel>=5.2           # read/write NIfTI files (Phase 3)
+nilearn>=0.10.4        # atlas fetching, NiftiLabelsMasker, ConnectivityMeasure (Phases 3-4)
+
+# --- Deep learning / graphs ---
+torch>=2.2             # GCN backbone; native Apple-Silicon (MPS) support (Phase 5)
+torch-geometric>=2.5   # graph convolution layers & data structures (Phase 5)
+
+# --- Visualization ---
+matplotlib>=3.7        # connectivity matrix heatmaps, result plots (Phases 4, 6, 7)
+
+# --- Utilities ---
+tqdm>=4.66             # progress bars for per-subject loops
