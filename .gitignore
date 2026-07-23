@@ -22,6 +22,8 @@ data/raw/**
 data/nifti/**
 data/timeseries/**
 data/connectivity/**
+data/metadata/**
+data/*.csv
 
 # Keep the empty-folder placeholders so the structure is preserved
 !**/.gitkeep
