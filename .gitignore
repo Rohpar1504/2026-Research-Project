@@ -31,3 +31,6 @@ data/*.csv
 # --- Model checkpoints & large outputs (regenerable) ---
 outputs/models/*.pt
 outputs/models/*.pth
+
+# QC overlays render subject brain images (derived ADNI data) - keep local
+outputs/figures/atlas_qc/**
