@@ -56,6 +56,12 @@ def convert_subject(subject_dir: Path, out_dir: Path) -> Path | None:
     subject_id = subject_dir.name
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Remove any existing output for this subject first. Otherwise dcm2niix will not
+    # overwrite - it appends a suffix (e.g. "<id>a.nii.gz"), silently creating a
+    # duplicate subject on re-runs. Clearing first keeps exactly one file per subject.
+    for stale in out_dir.glob(f"{subject_id}*"):
+        stale.unlink()
+
     # dcm2niix options:
     #   -z y            compress the output to .nii.gz (smaller, standard for research)
     #   -f <subject_id> name the output file after the subject (clean, predictable)
