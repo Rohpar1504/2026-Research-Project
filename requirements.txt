@@ -18,6 +18,7 @@ nilearn>=0.10.4        # atlas fetching, NiftiLabelsMasker, ConnectivityMeasure 
 # --- Deep learning / graphs ---
 torch>=2.2             # GCN backbone; native Apple-Silicon (MPS) support (Phase 5)
 torch-geometric>=2.5   # graph convolution layers & data structures (Phase 5)
+node2vec>=0.4          # graph embeddings for the node2vec + Random Forest model (Phase 5b)
 
 # --- Visualization ---
 matplotlib>=3.7        # connectivity matrix heatmaps, result plots (Phases 4, 6, 7)
