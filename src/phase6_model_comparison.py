@@ -112,8 +112,10 @@ def main() -> None:
     print("Phase 6: model & method comparison (4-fold stratified CV)\n")
 
     rows = []
+    n_subjects = 0
     for method in METHODS:
         mats, y, ids = load_method(method)
+        n_subjects = len(y)
 
         # Two representations of the same subjects:
         #   - node2vec feature vectors (for the shallow models) - computed once
@@ -159,7 +161,7 @@ def main() -> None:
           f"(acc={top['accuracy']:.3f}, f1={top['f1']:.3f}) ----")
 
     print(f"\nSaved table -> {out_csv.relative_to(PROJECT_ROOT)}")
-    print("Reminder: at n=16 these numbers are indicative, not conclusive.")
+    print(f"Reminder: at n={n_subjects} these numbers are indicative, not conclusive.")
 
 
 if __name__ == "__main__":
