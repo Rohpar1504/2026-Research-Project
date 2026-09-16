@@ -1,6 +1,6 @@
 # Does the Correlation Method Matter? Pearson vs. Spearman vs. Kendall Functional Connectivity for Alzheimer's Classification
 
-**Author:** Rohan Pareek — Undergraduate Researcher, Siebel School of Computing and Data Science, UIUC
+**Author:** Rohan Pareek — Graduate Researcher, Siebel School of Computing and Data Science, UIUC
 **Advisor:** Prof. Pablo D. Robles-Granda
 
 ## Research Question
@@ -10,9 +10,9 @@ classification of Alzheimer's Disease (AD) vs. Cognitively Normal (CN) subjects?
 The comparison is evaluated across several graph-based classification models.
 
 ## Dataset
-ADNI (Alzheimer's Disease Neuroimaging Initiative) — **16 subjects, balanced 8 AD / 8 CN**,
-all **ADNI-2 resting-state fMRI** (Philips 3T, TR ≈ 3 s, "Resting State fMRI" protocol).
-Groups are **sex-mirrored** (each 5M/3F) and **age-matched** (AD ≈ 75.8, CN ≈ 77.7).
+ADNI (Alzheimer's Disease Neuroimaging Initiative) — **28 subjects, balanced 14 AD / 14 CN**,
+all **ADNI-2 resting-state fMRI** (3T, TR ≈ 3 s, "Resting State fMRI" protocol).
+Groups are **sex-mirrored** (each 8M/6F) and **age-matched** (AD ≈ 78.3, CN ≈ 78.6).
 **No MCI or any other condition** — a clean binary split. Data begins as raw DICOM.
 
 ## Pipeline
@@ -36,7 +36,8 @@ Run scripts with the project venv, e.g. `.venv/bin/python src/phase4_connectivit
 Two families of graph-based models classify each subject's connectivity network:
 
 - **GCN** (`phase5_gcn.py`) — a Graph Convolutional Network + MLP head that learns
-  directly from the graph structure. *Data-hungry; collapses to one class at n=16.*
+  directly from the graph structure. *Data-hungry; collapses to predicting one class
+  (sensitivity 0.0) even at n=28.*
 - **node2vec + classifier** (`phase5b`, `phase6`) — node2vec embeds each graph's
   structure (unsupervised), mean-pooled into a per-subject vector, then classified by
   **Random Forest**, **MLP**, or **Logistic Regression** (a sigmoid shallow classifier).
@@ -44,20 +45,26 @@ Two families of graph-based models classify each subject's connectivity network:
 All models see identical graphs (top-20% strongest edges by `|correlation|`) so any
 performance difference reflects the model or the connectivity method, not preprocessing.
 
-## Current Status & Findings (indicative, n = 16)
+## Current Status & Findings (indicative, n = 28)
 Phase 6 evaluates every model × method with **4-fold stratified cross-validation**,
 reporting accuracy, sensitivity, specificity, and F1 (`outputs/results/model_comparison.csv`).
 
-- **Best result:** node2vec + **MLP** on **Spearman** — accuracy **0.875**, F1 **0.875**.
-- **MLP and Logistic Regression** beat Random Forest and the GCN — the first
-  above-chance signal that AD vs. CN is separable from connectivity.
-- For the working models, **rank-based methods (Spearman, Kendall) outperform Pearson**.
-- **The GCN still collapses** (sensitivity ≈ 0.125 — predicts almost everyone CN),
-  consistent with being too data-hungry at this sample size.
+- **Best result:** node2vec + **MLP** on **Spearman** — accuracy **0.821**, F1 **0.815**
+  (sensitivity 0.79, specificity 0.86). This is the **one result that held up** when the
+  cohort was expanded from 16 → 28 subjects (was 0.875 at n=16), making it the most
+  credible finding.
+- **The GCN fully collapses** — sensitivity **0.000** across all three methods (predicts
+  every subject CN). More data did not help; it is too data-hungry at this scale.
+- **Other results did not survive the larger cohort:** Logistic Regression dropped toward
+  chance, and the earlier "rank-based methods beat Pearson" trend did **not** robustly
+  hold. The one surviving signal is narrower: **Spearman performs best with the
+  best-performing model (MLP)**.
 
-> ⚠️ **Caveat:** with 16 subjects these numbers are **indicative, not conclusive**
-> (small folds, single random seed, many combinations searched). The *trends* are more
-> reliable than any single value; validation with more seeds and more subjects is planned.
+> ⚠️ **Caveat:** at 28 subjects these numbers remain **indicative, not conclusive**
+> (small folds, single random seed, multiple combinations searched). Expanding the cohort
+> from 16 → 28 acted as a robustness check and showed most single-run "signal" was noise —
+> only MLP + Spearman persisted. A multi-seed robustness check and further data collection
+> are planned.
 
 ## Folder Structure
 ```
