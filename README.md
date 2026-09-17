@@ -1,6 +1,6 @@
 # Does the Correlation Method Matter? Pearson vs. Spearman vs. Kendall Functional Connectivity for Alzheimer's Classification
 
-**Author:** Rohan Pareek — Graduate Researcher, Siebel School of Computing and Data Science, UIUC
+**Author:** Rohan Pareek — Graduate Researcher, Siebel School of Computing and Data Science, UIUC<br>
 **Advisor:** Prof. Pablo D. Robles-Granda
 
 ## Research Question
