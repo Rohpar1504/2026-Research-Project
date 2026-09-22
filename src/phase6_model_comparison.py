@@ -9,7 +9,8 @@ Addresses:
     - note 3  : 4-fold stratified cross-validation (k=4), suited to the small cohort,
                 replacing leave-one-out. The SAME folds are used for every model.
     - note 11 : compare classifiers - Random Forest vs MLP vs Logistic Regression
-                (the "sigmoid shallow classifier") - all on the node2vec features.
+                (the "sigmoid shallow classifier") - on BOTH node2vec and TopER
+                features (Phase 5c).
     - note (incl GCN): the Phase 5 Graph Convolutional Network is included too, run on
                 the graphs directly under the same folds.
     - note 7  : output a table of models x metrics for all three methods.
@@ -22,7 +23,8 @@ while held out), pooled over the 4 folds - stabler than averaging tiny per-fold 
 Usage:
     .venv/bin/python src/phase6_model_comparison.py
 
-Reuses: node2vec features (phase5b) and the GCN model (phase5).
+Reuses: node2vec features (phase5b), TopER features (phase5c), and the GCN model
+(phase5).
 """
 
 import sys
@@ -40,6 +42,7 @@ from sklearn.metrics import accuracy_score, recall_score, f1_score
 # Make the sibling phase scripts importable (they live in the same src/ folder).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from phase5b_node2vec_rf import embed_subject          # node2vec -> per-subject vector
+from phase5c_toper import embed_method as embed_toper_method  # TopER -> per-subject vector
 from phase5_gcn import GCN, build_graph, train_one, predict  # the graph model
 
 # --- Paths & config ----------------------------------------------------------
@@ -52,11 +55,12 @@ METHODS = ["pearson", "spearman", "kendall"]
 N_SPLITS = 4     # 4-fold cross-validation (note 3)
 SEED = 0
 
-# The shallow classifiers (note 11). Each is a fresh instance per fold.
-SHALLOW_MODELS = {
-    "node2vec+RandomForest": lambda: RandomForestClassifier(n_estimators=200, random_state=SEED),
-    "node2vec+MLP":          lambda: MLPClassifier(hidden_layer_sizes=(32,), max_iter=1000, random_state=SEED),
-    "node2vec+LogisticReg":  lambda: LogisticRegression(max_iter=1000, random_state=SEED),
+# The shallow classifiers (note 11). Each is a fresh instance per fold. Applied
+# identically to every feature source below, so the comparison stays fair.
+CLASSIFIER_CTORS = {
+    "RandomForest": lambda: RandomForestClassifier(n_estimators=200, random_state=SEED),
+    "MLP":          lambda: MLPClassifier(hidden_layer_sizes=(32,), max_iter=1000, random_state=SEED),
+    "LogisticReg":  lambda: LogisticRegression(max_iter=1000, random_state=SEED),
 }
 
 
@@ -117,20 +121,25 @@ def main() -> None:
         mats, y, ids = load_method(method)
         n_subjects = len(y)
 
-        # Two representations of the same subjects:
+        # Three representations of the same subjects:
         #   - node2vec feature vectors (for the shallow models) - computed once
+        #   - TopER feature vectors (for the shallow models) - computed once
         #   - PyG graphs (for the GCN)
-        X = np.array([embed_subject(m) for m in mats])
+        X_node2vec = np.array([embed_subject(m) for m in mats])
+        X_toper, y_toper, ids_toper = embed_toper_method(method)
+        assert ids_toper == ids, "TopER subject order must match load_method's order"
         graphs = [build_graph(m, int(lbl)) for m, lbl in zip(mats, y)]
 
         # One fixed set of 4 stratified folds, reused by EVERY model for fairness.
         skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
         splits = list(skf.split(np.zeros(len(y)), y))
 
-        # Shallow models on node2vec features.
-        for name, ctor in SHALLOW_MODELS.items():
-            preds = oof_predictions_shallow(ctor, X, y, splits)
-            rows.append({"model": name, "method": method, **compute_metrics(y, preds)})
+        # Shallow models on node2vec features, then on TopER features.
+        for feat_name, X in [("node2vec", X_node2vec), ("TopER", X_toper)]:
+            for clf_name, ctor in CLASSIFIER_CTORS.items():
+                preds = oof_predictions_shallow(ctor, X, y, splits)
+                rows.append({"model": f"{feat_name}+{clf_name}", "method": method,
+                             **compute_metrics(y, preds)})
 
         # The GCN on graphs.
         preds = oof_predictions_gcn(graphs, y, splits)
