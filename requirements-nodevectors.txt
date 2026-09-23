@@ -1,0 +1,16 @@
+# =============================================================================
+# Requirements for Phase 5d ONLY (src/phase5d_nodevectors.py) - install into a
+# SEPARATE venv (~/.venvs/nodevectors), not the project's main .venv.
+#
+# nodevectors' own dependency (csrgraph) calls nx.adj_matrix(), removed in
+# networkx 3.x, so it hard-pins networkx==2.5.1 - incompatible with node2vec's
+# and toper's networkx>=3 requirement in the main requirements.txt. That old
+# networkx in turn needs numpy<2.0, which in turn needs scipy<1.14. See the
+# README "Note on Phase 5d" for the full explanation.
+# =============================================================================
+
+nodevectors             # pulls in networkx==2.5.1, gensim, numba, csrgraph
+numpy<2.0                # required by networkx==2.5.1 (uses the removed np.float_)
+scipy<1.14                # required by numpy<2.0
+scikit-learn
+joblib

@@ -39,11 +39,15 @@ Requirements: node2vec, networkx, scikit-learn, numpy, joblib
 import warnings
 from pathlib import Path
 
+import sys
 import numpy as np
 import networkx as nx
 import joblib
 from node2vec import Node2Vec
 from sklearn.ensemble import RandomForestClassifier
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from graph_utils import build_nx_graph, KEEP_FRAC  # noqa: F401 (re-exported for phase5c/phase5d)
 
 # --- Paths & config ----------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -51,9 +55,6 @@ CONN_DIR = PROJECT_ROOT / "data" / "connectivity"
 MODEL_DIR = PROJECT_ROOT / "outputs" / "models"
 GROUPS = {"CN": 0, "AD": 1}
 METHODS = ["pearson", "spearman", "kendall"]
-
-# Graph construction - identical to the GCN's, for a fair comparison.
-KEEP_FRAC = 0.20
 
 # node2vec settings (standard defaults).
 DIM = 64
@@ -63,28 +64,6 @@ SEED = 0
 
 # Random Forest settings.
 N_TREES = 200
-
-
-def build_nx_graph(mat: np.ndarray, keep_frac: float = KEEP_FRAC) -> nx.Graph:
-    """
-    Connectivity matrix -> weighted networkx graph, keeping the top `keep_frac` of
-    off-diagonal edges by |correlation| (self-loops removed). Edge weight = |corr|,
-    so node2vec's walks favor the strongest connections.
-    """
-    n = mat.shape[0]
-    A = mat.copy()
-    np.fill_diagonal(A, 0.0)
-
-    iu = np.triu_indices(n, k=1)
-    threshold = np.quantile(np.abs(A[iu]), 1 - keep_frac)
-
-    G = nx.Graph()
-    G.add_nodes_from(range(n))
-    for i, j in zip(*iu):
-        w = abs(A[i, j])
-        if w >= threshold:
-            G.add_edge(int(i), int(j), weight=float(w))
-    return G
 
 
 def embed_subject(mat: np.ndarray) -> np.ndarray:

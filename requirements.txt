@@ -20,6 +20,7 @@ torch>=2.2             # GCN backbone; native Apple-Silicon (MPS) support (Phase
 torch-geometric>=2.5   # graph convolution layers & data structures (Phase 5)
 node2vec>=0.4          # graph embeddings for the node2vec + Random Forest model (Phase 5b)
 toper>=1.0.3           # graph-level topological embeddings (Phase 5c); pulls in GraphRicciCurvature
+gee @ git+https://github.com/cshen6/GraphEmd.git#subdirectory=Experiments/Python  # Graph Encoder Embedding (Phase 5e)
 
 # --- Visualization ---
 matplotlib>=3.7        # connectivity matrix heatmaps, result plots (Phases 4, 6, 7)

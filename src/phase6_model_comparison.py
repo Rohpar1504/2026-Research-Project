@@ -9,8 +9,8 @@ Addresses:
     - note 3  : 4-fold stratified cross-validation (k=4), suited to the small cohort,
                 replacing leave-one-out. The SAME folds are used for every model.
     - note 11 : compare classifiers - Random Forest vs MLP vs Logistic Regression
-                (the "sigmoid shallow classifier") - on BOTH node2vec and TopER
-                features (Phase 5c).
+                (the "sigmoid shallow classifier") - on node2vec, TopER (Phase 5c),
+                GGVec/nodevectors (Phase 5d), and GEE (Phase 5e) features.
     - note (incl GCN): the Phase 5 Graph Convolutional Network is included too, run on
                 the graphs directly under the same folds.
     - note 7  : output a table of models x metrics for all three methods.
@@ -21,13 +21,16 @@ All metrics are computed from OUT-OF-FOLD predictions (every subject predicted o
 while held out), pooled over the 4 folds - stabler than averaging tiny per-fold scores.
 
 Usage:
-    .venv/bin/python src/phase6_model_comparison.py
+    KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 .venv/bin/python src/phase6_model_comparison.py
 
-Reuses: node2vec features (phase5b), TopER features (phase5c), and the GCN model
-(phase5).
+Reuses: node2vec features (phase5b), TopER features (phase5c), GGVec features
+(phase5d, via a subprocess bridge - see GGVEC_PYTHON below), GEE features
+(phase5e), and the GCN model (phase5).
 """
 
+import subprocess
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -40,9 +43,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, recall_score, f1_score
 
 # Make the sibling phase scripts importable (they live in the same src/ folder).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SRC_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SRC_DIR))
 from phase5b_node2vec_rf import embed_subject          # node2vec -> per-subject vector
 from phase5c_toper import embed_method as embed_toper_method  # TopER -> per-subject vector
+from phase5e_gee import embed_subject as embed_gee_subject  # GEE -> per-subject vector
 from phase5_gcn import GCN, build_graph, train_one, predict  # the graph model
 
 # --- Paths & config ----------------------------------------------------------
@@ -51,6 +56,11 @@ CONN_DIR = PROJECT_ROOT / "data" / "connectivity"
 RESULTS_DIR = PROJECT_ROOT / "outputs" / "results"
 GROUPS = {"CN": 0, "AD": 1}
 METHODS = ["pearson", "spearman", "kendall"]
+
+# GGVec (nodevectors) lives in a SEPARATE venv (networkx version conflict - see
+# README "Note on Phase 5d"), so its features are computed via subprocess into
+# src/ggvec_bridge.py rather than imported directly into this process.
+GGVEC_PYTHON = Path.home() / ".venvs" / "nodevectors" / "bin" / "python"
 
 N_SPLITS = 4     # 4-fold cross-validation (note 3)
 SEED = 0
@@ -73,6 +83,32 @@ def load_method(method: str):
             y.append(label)
             ids.append(f"{group}/{f.stem}")
     return mats, np.array(y), ids
+
+
+def embed_ggvec_method(method: str, expected_ids: list):
+    """
+    GGVec features for one method, computed by shelling out to the SEPARATE
+    ~/.venvs/nodevectors environment (src/ggvec_bridge.py), since nodevectors'
+    networkx==2.5.1 pin cannot coexist in this process with node2vec's/toper's
+    networkx>=3. Returns X only; verifies subject order matches load_method's.
+    """
+    if not GGVEC_PYTHON.exists():
+        raise FileNotFoundError(
+            f"GGVec venv not found at {GGVEC_PYTHON}. Set it up per the README "
+            f"'Note on Phase 5d' (python3 -m venv ~/.venvs/nodevectors ; "
+            f"~/.venvs/nodevectors/bin/pip install -r requirements-nodevectors.txt)."
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        out_path = Path(tmp) / f"{method}.npz"
+        subprocess.run(
+            [str(GGVEC_PYTHON), str(SRC_DIR / "ggvec_bridge.py"),
+             "--method", method, "--out", str(out_path)],
+            check=True,
+        )
+        data = np.load(out_path, allow_pickle=True)
+        X, ids = data["X"], list(data["ids"])
+    assert ids == expected_ids, "GGVec subject order must match load_method's order"
+    return X
 
 
 def compute_metrics(y_true, y_pred) -> dict:
@@ -121,21 +157,27 @@ def main() -> None:
         mats, y, ids = load_method(method)
         n_subjects = len(y)
 
-        # Three representations of the same subjects:
+        # Five representations of the same subjects:
         #   - node2vec feature vectors (for the shallow models) - computed once
         #   - TopER feature vectors (for the shallow models) - computed once
+        #   - GGVec feature vectors (for the shallow models) - computed once, via
+        #     subprocess into the separate nodevectors venv
+        #   - GEE feature vectors (for the shallow models) - computed once
         #   - PyG graphs (for the GCN)
         X_node2vec = np.array([embed_subject(m) for m in mats])
         X_toper, y_toper, ids_toper = embed_toper_method(method)
         assert ids_toper == ids, "TopER subject order must match load_method's order"
+        X_ggvec = embed_ggvec_method(method, ids)
+        X_gee = np.array([embed_gee_subject(m) for m in mats])
         graphs = [build_graph(m, int(lbl)) for m, lbl in zip(mats, y)]
 
         # One fixed set of 4 stratified folds, reused by EVERY model for fairness.
         skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
         splits = list(skf.split(np.zeros(len(y)), y))
 
-        # Shallow models on node2vec features, then on TopER features.
-        for feat_name, X in [("node2vec", X_node2vec), ("TopER", X_toper)]:
+        # Shallow models on node2vec, TopER, GGVec, and GEE features in turn.
+        for feat_name, X in [("node2vec", X_node2vec), ("TopER", X_toper),
+                              ("GGVec", X_ggvec), ("GEE", X_gee)]:
             for clf_name, ctor in CLASSIFIER_CTORS.items():
                 preds = oof_predictions_shallow(ctor, X, y, splits)
                 rows.append({"model": f"{feat_name}+{clf_name}", "method": method,
