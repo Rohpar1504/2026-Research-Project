@@ -28,6 +28,7 @@ Groups are **sex-mirrored** (each 8M/6F) and **age-matched** (AD ≈ 78.3, CN �
 | 5c | **TopER** (topology-inspired graph embedding) + Random Forest classifier | `src/phase5c_toper.py` | ✅ |
 | 5d | **GGVec** (nodevectors) embeddings + Random Forest classifier | `src/phase5d_nodevectors.py` | ✅ |
 | 5e | **GEE** (Graph Encoder Embedding) + Random Forest classifier | `src/phase5e_gee.py` | ✅ |
+| 5f | **Brain Network Transformer** (Transformer + learned clustering) | `src/phase5f_brain_transformer.py` | ✅ |
 | 6 | 4-fold CV comparison: models × methods × metrics | `src/phase6_model_comparison.py` | ✅ |
 | 7 | Interpret important regions/edges per method | (planned) | ⏭️ |
 | 8 | Write-up | `outputs/` | ⏭️ |
@@ -36,7 +37,7 @@ Each script is **independently runnable** and reads from the previous phase's ou
 Run scripts with the project venv, e.g. `.venv/bin/python src/phase4_connectivity.py`.
 
 ## Models Compared
-Five families of graph-based models classify each subject's connectivity network:
+Six families of graph-based models classify each subject's connectivity network:
 
 - **GCN** (`phase5_gcn.py`) — a Graph Convolutional Network + MLP head that learns
   directly from the graph structure. *Data-hungry; collapses to predicting one class
@@ -77,45 +78,70 @@ Five families of graph-based models classify each subject's connectivity network
   3-dimensional, directly interpretable feature per region ("how connected is this
   region to left/right/midline structures") - mean-pooled into a per-subject vector
   and classified the same way as the others.
+- **Brain Network Transformer (BNT)** (`phase5f`, `phase6`) — Kan, Dai, Cui, Zhang,
+  Guo & Yang, NeurIPS 2022. A Transformer applied directly to the connectivity
+  matrix: each region's own row (its full "connection profile") is its feature
+  vector; self-attention learns pairwise region relationships; a learned
+  "Orthonormal Clustering Readout" (soft clustering via the DEC algorithm) pools
+  regions into functional-module-like clusters before an MLP head classifies AD vs
+  CN. Like the GCN, this is **supervised, end-to-end** (not an unsupervised
+  embedding + shallow classifier), trained fresh within each CV fold. Uses the
+  unmodified official code, cloned read-only into
+  `reference/BrainNetworkTransformer/` (same convention as `reference/SGCN/`).
+  **Note:** since the whole point of "connection profile as node feature" is the
+  *complete* profile, BNT uses the RAW connectivity matrix, not the top-20%
+  thresholded graph the other 5 models share - an inherent property of its
+  full-attention design, not a shortcut (documented in `phase5f`'s docstring).
+  **PyTorch compatibility:** their 2022 code predates a PyTorch 2.0 API change
+  (`TransformerEncoderLayer` now passes an `is_causal` argument their code doesn't
+  expect) - no installable PyTorch version avoids this. Per the advisor's explicit
+  decision, a minimal compatibility shim is applied at runtime (their file on disk
+  is untouched; only the call signature is widened to discard the new argument -
+  see `phase5f_brain_transformer.py`'s docstring for the full accounting).
 
 All models see identical graphs (top-20% strongest edges by `|correlation|`) so any
 performance difference reflects the model or the connectivity method, not preprocessing.
 
 ## Current Status & Findings (indicative, n = 28)
-Phase 6 evaluates every model × method — **13 models × 3 methods = 39 rows** (GCN,
-node2vec, TopER, GGVec, and GEE) — with **4-fold stratified cross-validation**,
-reporting accuracy, sensitivity, specificity, and F1
+Phase 6 evaluates every model × method — **14 models × 3 methods = 42 rows** (GCN,
+node2vec, TopER, GGVec, GEE, and now the Brain Network Transformer) — with
+**4-fold stratified cross-validation**, reporting accuracy, sensitivity,
+specificity, and F1, each as **mean +/- std dev across the 4 folds**
 (`outputs/results/model_comparison.csv`).
 
-- **Best result overall is node2vec + MLP on Spearman** — accuracy **0.857**, F1
-  **0.857**. This is the most credible finding: it has held up (and slightly improved)
-  across every rerun, including after adding TopER, fixing a graph-construction bug
-  (below), and adding GGVec and GEE.
-- **GGVec's best result under 4-fold CV is GGVec + RandomForest on Kendall** —
-  accuracy **0.571**. Note `phase5d_nodevectors.py`'s own **leave-one-out**
-  evaluation showed GGVec + Random Forest reaching **0.79** on Pearson in an earlier
-  run - that gap is partly the LOOCV-vs-4-fold-CV protocol difference (worth
-  discussing with the advisor), and partly because **GGVec's own class has no fixed
-  random seed** (confirmed from its source - `nodevectors.GGVec` takes no
-  `random_state`/`seed` parameter), so its embeddings - and downstream accuracy -
-  vary somewhat between runs even with identical code and data. Treat any single
-  GGVec number as approximate; a multi-run average would be more honest than any one
-  run's figure.
-- **TopER's best results tie at accuracy 0.50** (TopER + MLP on Spearman and on
-  Kendall; TopER + LogisticReg on Pearson) — meaningfully weaker than node2vec here.
-  TopER does **not** reproduce node2vec's Spearman signal, reinforcing that the
-  "Spearman helps" effect is tied to specific representations, not a
-  method-independent property of the data.
-- **GEE's best result is GEE + RandomForest on Kendall** — accuracy **0.536**, F1
-  **0.435**. GEE is deterministic (no randomness in its embedding step, unlike
-  GGVec), so this number is fully reproducible. Its 3-dimensional hemisphere-based
-  embedding is the lowest-dimensional and most directly interpretable of any model
-  here, but also the weakest signal overall - a reasonable outcome given hemisphere
-  alone is a coarse structural summary compared to the other methods' richer
-  representations.
-- **The GCN fully collapses** — sensitivity **0.000** across all three methods (predicts
-  every subject CN) — unaffected by the fix below, since it uses its own separate graph
-  builder in `phase5_gcn.py`. Too data-hungry at this scale, unchanged conclusion.
+- **Best result overall is node2vec + MLP on Spearman** — accuracy **0.857 +/- 0.117**,
+  F1 **0.839 +/- 0.141**. This is the most credible finding: it has held up (and
+  slightly improved from the original 0.821) across every rerun, including after
+  adding TopER, fixing a graph-construction bug (below), and adding GGVec, GEE, and
+  the Brain Network Transformer.
+- **Both supervised, end-to-end neural nets fully collapse — GCN and the Brain
+  Network Transformer alike**: accuracy **0.500 +/- 0.082**, sensitivity **0.000**
+  (predicts every subject CN), on all three connectivity methods, for both models.
+  This is a real, coherent finding, not a bug in either implementation: at n=28,
+  even a much larger, more sophisticated architecture (BNT, ~1.5M parameters) fails
+  exactly the same way the simple 2-layer GCN does. The pattern across the whole
+  comparison is now clear: **unsupervised embedding + shallow classifier approaches
+  (node2vec/TopER/GGVec/GEE) remain viable at this sample size; supervised
+  end-to-end deep nets do not.**
+- **TopER's best results tie at accuracy 0.500** (TopER + MLP on Spearman and on
+  Kendall; TopER + LogisticReg on Pearson) — meaningfully weaker than node2vec here,
+  and fully reproducible (TopER has no randomness). TopER does **not** reproduce
+  node2vec's Spearman signal, reinforcing that the "Spearman helps" effect is tied
+  to specific representations, not a method-independent property of the data.
+- **GEE's best result is GEE + RandomForest on Kendall** — accuracy **0.536 +/- 0.137**,
+  F1 **0.371 +/- 0.307**. Also fully reproducible (GEE has no randomness). Its
+  3-dimensional hemisphere-based embedding is the lowest-dimensional and most
+  directly interpretable of any model here, but also among the weakest signals
+  overall - a reasonable outcome given hemisphere alone is a coarse structural
+  summary compared to the other methods' richer representations.
+- **GGVec's best result under 4-fold CV is GGVec + LogisticReg on Pearson** —
+  accuracy **0.429 +/- 0.000** this run. **GGVec's own class has no fixed random
+  seed** (confirmed from its source - `nodevectors.GGVec` takes no
+  `random_state`/`seed` parameter), so its embeddings - and every downstream number
+  - genuinely change between runs on identical code and data: this same "best GGVec
+  result" has read 0.571-0.79 in earlier reruns of this exact pipeline. Treat any
+  single GGVec number as illustrative only; a multi-run average would be the honest
+  way to report it, and is worth doing before this goes in any write-up.
 - **Data-quality bug found and fixed (2026):** `graph_utils.build_nx_graph` (the graph
   construction shared by node2vec/TopER/GGVec/GEE) computed its edge threshold with
   `np.quantile`, which silently returns `NaN` when its input contains `NaN` values.
@@ -153,7 +179,8 @@ reporting accuracy, sensitivity, specificity, and F1
 ├── src/                               # one script per phase (+ QC)
 │   ├── graph_utils.py                  # shared graph construction (build_nx_graph)
 │   ├── ggvec_bridge.py                 # subprocess bridge: nodevectors venv -> phase6
-│   └── phase5e_gee.py                  # GEE model (hemisphere labels) - Phase 5e
+│   ├── phase5e_gee.py                  # GEE model (hemisphere labels) - Phase 5e
+│   └── phase5f_brain_transformer.py    # Brain Network Transformer - Phase 5f
 ├── outputs/
 │   ├── figures/
 │   │   ├── atlas_qc/                   # atlas-on-brain overlays (git-ignored: brain images)
@@ -161,6 +188,7 @@ reporting accuracy, sensitivity, specificity, and F1
 │   ├── models/                         # trained GCN (.pt) & RF (.joblib) — git-ignored
 │   └── results/model_comparison.csv    # Phase 6 metrics table
 ├── reference/SGCN/                    # cloned reference repo — READ ONLY, git-ignored
+├── reference/BrainNetworkTransformer/ # cloned reference repo — READ ONLY, git-ignored
 ├── requirements.txt
 ├── requirements-nodevectors.txt        # separate env for Phase 5d — see Setup
 ├── .gitignore
@@ -182,7 +210,23 @@ pip install -r requirements.txt
 
 # 4. Clone SGCN as a READ-ONLY architecture reference (not copied wholesale)
 git clone https://github.com/Houliang-Zhou/SGCN.git reference/SGCN
+
+# 5. Clone the Brain Network Transformer's official code (used UNMODIFIED - Phase 5f)
+git clone https://github.com/Wayfear/BrainNetworkTransformer.git reference/BrainNetworkTransformer
 ```
+
+**Note on Phase 5f (Brain Network Transformer):** their 2022 code predates a
+PyTorch 2.0 API change (`TransformerEncoderLayer.forward()` now passes an
+`is_causal` argument their `InterpretableTransformerEncoder._sa_block()` override
+doesn't accept). No installable PyTorch version on any Python we could test avoids
+this - checked PyPI (Python 3.11 and 3.12) and PyTorch's own wheel index, all only
+serve torch>=2.0.0. Per the advisor's explicit decision (asked directly, given the
+"use their code unmodified" instruction), `phase5f_brain_transformer.py` applies a
+minimal runtime compatibility shim: their cloned file is never edited - at import
+time, their original `_sa_block` function object is captured and wrapped in a new
+outer function that accepts and discards the extra `is_causal` argument, then calls
+their original, unchanged function body. See the script's docstring for the full
+reasoning.
 
 **Note on Phase 6:** loading `torch` (GCN), `gensim`/node2vec, and `networkit`
 (TopER's `GraphRicciCurvature` dependency) in the same process can segfault on macOS
@@ -217,8 +261,12 @@ Topological Embeddings in Graph Representation Learning,"* NeurIPS 2025). GGVec
 embeddings use the unmodified `nodevectors` pip package
 (https://github.com/VHRanger/nodevectors, Ranger). GEE embeddings use the
 unmodified `gee` package (https://github.com/cshen6/GraphEmd; Shen, C., Wang, Q.,
-Priebe, C.E., *"One-hot graph encoder embedding,"* IEEE TPAMI 45(6), 2023). All
-pipeline code is written from scratch; inspiration is credited inline.
+Priebe, C.E., *"One-hot graph encoder embedding,"* IEEE TPAMI 45(6), 2023). The
+Brain Network Transformer (Phase 5f) uses the unmodified official implementation
+(https://github.com/Wayfear/BrainNetworkTransformer; Kan, X., Dai, W., Cui, H.,
+Zhang, Z., Guo, Y., Yang, C., *"BrainNetworkTransformer,"* NeurIPS 2022), with only
+a runtime PyTorch-version compatibility shim (see Setup) - not their algorithm.
+All pipeline code is written from scratch; inspiration is credited inline.
 
 ## Data Ethics
 ADNI data is used under its Data Use Agreement. **No subject data — raw scans, NIfTI,

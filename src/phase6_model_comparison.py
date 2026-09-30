@@ -13,19 +13,23 @@ Addresses:
                 GGVec/nodevectors (Phase 5d), and GEE (Phase 5e) features.
     - note (incl GCN): the Phase 5 Graph Convolutional Network is included too, run on
                 the graphs directly under the same folds.
+    - note (incl BNT): the Phase 5f Brain Network Transformer is included too, trained
+                fresh within each fold like the GCN (both are supervised, end-to-end
+                neural nets, unlike the unsupervised-embedding + shallow-classifier
+                models above).
     - note 7  : output a table of models x metrics for all three methods.
     - note 2  : report which connectivity method is best for each model.
 
-Metrics: accuracy, sensitivity (AD recall), specificity (CN recall), F1.
-All metrics are computed from OUT-OF-FOLD predictions (every subject predicted once,
-while held out), pooled over the 4 folds - stabler than averaging tiny per-fold scores.
+Metrics: accuracy, sensitivity (AD recall), specificity (CN recall), F1 - each
+reported as MEAN +/- STD DEV across the 4 CV folds (computed per-fold, not pooled),
+per the advisor's request to include variability alongside the point estimate.
 
 Usage:
     KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 .venv/bin/python src/phase6_model_comparison.py
 
 Reuses: node2vec features (phase5b), TopER features (phase5c), GGVec features
 (phase5d, via a subprocess bridge - see GGVEC_PYTHON below), GEE features
-(phase5e), and the GCN model (phase5).
+(phase5e), the GCN model (phase5), and the Brain Network Transformer (phase5f).
 """
 
 import subprocess
@@ -49,6 +53,10 @@ from phase5b_node2vec_rf import embed_subject          # node2vec -> per-subject
 from phase5c_toper import embed_method as embed_toper_method  # TopER -> per-subject vector
 from phase5e_gee import embed_subject as embed_gee_subject  # GEE -> per-subject vector
 from phase5_gcn import GCN, build_graph, train_one, predict  # the graph model
+from phase5f_brain_transformer import (        # the Brain Network Transformer
+    BrainNetworkTransformer, BNT_CONFIG,
+    train_one as bnt_train_one, predict as bnt_predict,
+)
 
 # --- Paths & config ----------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -121,29 +129,64 @@ def compute_metrics(y_true, y_pred) -> dict:
     }
 
 
-def oof_predictions_shallow(model_ctor, X, y, splits) -> np.ndarray:
-    """Out-of-fold predictions for a scikit-learn model on feature matrix X."""
-    preds = np.zeros(len(y), dtype=int)
+def fold_metrics_shallow(model_ctor, X, y, splits) -> list:
+    """Per-fold metrics (not pooled) for a scikit-learn model on feature matrix X."""
+    results = []
     for train_idx, test_idx in splits:
         clf = model_ctor()
         clf.fit(X[train_idx], y[train_idx])
-        preds[test_idx] = clf.predict(X[test_idx])
-    return preds
+        preds = clf.predict(X[test_idx])
+        results.append(compute_metrics(y[test_idx], preds))
+    return results
 
 
-def oof_predictions_gcn(graphs, y, splits) -> np.ndarray:
-    """Out-of-fold predictions for the GCN, trained on graphs under the same folds."""
+def fold_metrics_gcn(graphs, y, splits) -> list:
+    """Per-fold metrics (not pooled) for the GCN, trained fresh within each fold."""
     import torch
-    preds = np.zeros(len(y), dtype=int)
+    results = []
     in_dim = graphs[0].x.shape[1]
     for train_idx, test_idx in splits:
         torch.manual_seed(SEED)
         np.random.seed(SEED)
         train_graphs = [graphs[i] for i in train_idx]
         model = train_one(GCN(in_dim), train_graphs)
-        for i in test_idx:
-            preds[i] = predict(model, graphs[i])
-    return preds
+        preds = np.array([predict(model, graphs[i]) for i in test_idx])
+        results.append(compute_metrics(y[test_idx], preds))
+    return results
+
+
+def fold_metrics_bnt(X_raw: np.ndarray, y: np.ndarray, splits) -> list:
+    """
+    Per-fold metrics (not pooled) for the Brain Network Transformer, trained fresh
+    within each fold (same pattern as GCN - both are supervised end-to-end nets).
+    X_raw is the RAW (untresholded) connectivity matrices - see phase5f's docstring
+    for why BNT uses the full connection profile rather than the thresholded graph.
+    """
+    import torch
+    results = []
+    X_t = torch.tensor(X_raw, dtype=torch.float)
+    y_t = torch.tensor(y, dtype=torch.long)
+    for train_idx, test_idx in splits:
+        torch.manual_seed(SEED)
+        np.random.seed(SEED)
+        model = BrainNetworkTransformer(BNT_CONFIG)
+        model = bnt_train_one(model, X_t[train_idx], y_t[train_idx])
+        preds = np.array([bnt_predict(model, X_t[i]) for i in test_idx])
+        results.append(compute_metrics(y[test_idx], preds))
+    return results
+
+
+def aggregate_fold_metrics(fold_results: list) -> dict:
+    """
+    Mean +/- sample std dev (ddof=1, the standard convention for reporting k-fold CV
+    variability) across the 4 per-fold metric dicts, for each metric.
+    """
+    agg = {}
+    for key in fold_results[0]:
+        vals = np.array([fr[key] for fr in fold_results])
+        agg[key] = vals.mean()
+        agg[f"{key}_std"] = vals.std(ddof=1)
+    return agg
 
 
 def main() -> None:
@@ -179,17 +222,24 @@ def main() -> None:
         for feat_name, X in [("node2vec", X_node2vec), ("TopER", X_toper),
                               ("GGVec", X_ggvec), ("GEE", X_gee)]:
             for clf_name, ctor in CLASSIFIER_CTORS.items():
-                preds = oof_predictions_shallow(ctor, X, y, splits)
+                fold_results = fold_metrics_shallow(ctor, X, y, splits)
                 rows.append({"model": f"{feat_name}+{clf_name}", "method": method,
-                             **compute_metrics(y, preds)})
+                             **aggregate_fold_metrics(fold_results)})
 
         # The GCN on graphs.
-        preds = oof_predictions_gcn(graphs, y, splits)
-        rows.append({"model": "GCN", "method": method, **compute_metrics(y, preds)})
+        fold_results = fold_metrics_gcn(graphs, y, splits)
+        rows.append({"model": "GCN", "method": method, **aggregate_fold_metrics(fold_results)})
+
+        # The Brain Network Transformer on the RAW (untresholded) connectivity matrices.
+        fold_results = fold_metrics_bnt(np.array(mats), y, splits)
+        rows.append({"model": "BrainNetTransformer", "method": method,
+                     **aggregate_fold_metrics(fold_results)})
 
         print(f"  [{method}] done")
 
-    df = pd.DataFrame(rows)[["model", "method", "accuracy", "sensitivity", "specificity", "f1"]]
+    METRIC_COLS = ["accuracy", "accuracy_std", "sensitivity", "sensitivity_std",
+                   "specificity", "specificity_std", "f1", "f1_std"]
+    df = pd.DataFrame(rows)[["model", "method"] + METRIC_COLS]
     df = df.round(3)
 
     # Save the full table (abstract numbers - safe to commit).
@@ -199,17 +249,20 @@ def main() -> None:
     print("\n================ MODEL x METHOD COMPARISON (note 7) ================")
     print(df.to_string(index=False))
 
-    # Note 2: best connectivity method for each model (by accuracy).
+    # Note 2: best connectivity method for each model (by mean accuracy).
     print("\n---- Best method per model, by accuracy (note 2) ----")
     for model in df["model"].unique():
         sub = df[df["model"] == model]
         best = sub.loc[sub["accuracy"].idxmax()]
-        print(f"  {model:24s} -> {best['method']:9s} (acc={best['accuracy']:.3f}, f1={best['f1']:.3f})")
+        print(f"  {model:24s} -> {best['method']:9s} "
+              f"(acc={best['accuracy']:.3f}+/-{best['accuracy_std']:.3f}, "
+              f"f1={best['f1']:.3f}+/-{best['f1_std']:.3f})")
 
-    # Note 1: single best model+method overall (by accuracy).
+    # Note 1: single best model+method overall (by mean accuracy).
     top = df.loc[df["accuracy"].idxmax()]
     print(f"\n---- Best overall (note 1): {top['model']} on {top['method']} "
-          f"(acc={top['accuracy']:.3f}, f1={top['f1']:.3f}) ----")
+          f"(acc={top['accuracy']:.3f}+/-{top['accuracy_std']:.3f}, "
+          f"f1={top['f1']:.3f}+/-{top['f1_std']:.3f}) ----")
 
     print(f"\nSaved table -> {out_csv.relative_to(PROJECT_ROOT)}")
     print(f"Reminder: at n={n_subjects} these numbers are indicative, not conclusive.")

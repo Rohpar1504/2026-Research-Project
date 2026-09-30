@@ -12,6 +12,7 @@ env/
 
 # --- Cloned reference code (kept local, not committed to your repo) ---
 reference/SGCN/
+reference/BrainNetworkTransformer/
 
 # =============================================================================
 # DATA IS NOT COMMITTED.
